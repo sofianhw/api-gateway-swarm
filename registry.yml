@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  registry:
+    image: registry:2
+    deploy:
+      placement:
+         constraints:
+             - node.role == manager
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.reg.entrypoints=websecure
+        - traefik.http.routers.reg.rule=Host(`registry.slipiconvalley.com`)
+        - traefik.http.routers.reg.tls=true
+        - traefik.http.services.reg.loadbalancer.server.port=5000
+    environment:
+      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /data
+    volumes:
+      - ./data:/data
+    networks:
+      - traefik-public
+
+networks:
+  traefik-public:
+    external: true

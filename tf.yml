@@ -1,0 +1,90 @@
+version: '3.8'
+services:
+    traefik:
+        image: traefik:v2.4
+        ports:
+          - target: 80
+            published: 80
+            protocol: tcp
+            mode: host
+          - target: 443
+            published: 443
+            protocol: tcp
+            mode: host
+          - target: 8003
+            published: 8003
+            protocol: tcp
+            mode: host
+
+        command:
+          - --providers.docker
+          - --providers.docker.swarmMode=true
+          - --providers.docker.exposedByDefault=false
+          - --providers.docker.network=traefik-public
+          - --providers.file.filename=/traefik_conf/config.yml
+          - --providers.file.watch=true
+          - --entrypoints.web.address=:80
+          #- --entrypoints.web.http.redirections.entryPoint.to=websecure
+          #- --entrypoints.web.http.redirections.entryPoint.scheme=https
+          - --entrypoints.websecure.address=:443
+          - --entrypoints.api.address=:8003
+          - --api
+          - --accesslog
+          - --log.level=debug
+          - --pilot.token=1c1a23ac-72ba-452f-af76-bcea6ea62392
+          - --metrics.prometheus=true
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock:ro
+          - /home/ubuntu/wks/traefik/traefik_conf:/traefik_conf
+        networks:
+          - traefik-public
+        deploy:
+            mode: global
+            placement:
+                constraints:
+                    - node.role == manager
+            labels:
+              # traefik.enable is required because we don't expose all containers automatically
+              - traefik.enable=true
+              - traefik.docker.network=traefik-public
+
+              # Global redirection: HTTP to HTTPS
+              #- traefik.http.routers.http-redirects.entrypoints=web
+              #- traefik.http.routers.http-redirects.rule=hostregexp(`{host:(www\.)?.+}`)
+              #- traefik.http.routers.http-redirects.middlewares=traefik-ratelimit,redirect-to-non-www-https
+              #- traefik.http.routers.http-redirects.middlewares=traefik-ratelimit
+
+              # Global redirection: HTTPS www to HTTPS non-www
+              #- traefik.http.routers.www-redirects.entrypoints=websecure
+              #- traefik.http.routers.www-redirects.rule=hostregexp(`{host:(www\.).+}`)
+              #- traefik.http.routers.www-redirects.tls=true
+              #- traefik.http.routers.www-redirects.tls.options=default
+              #- traefik.http.routers.www-redirects.middlewares=traefik-ratelimit,redirect-to-non-www-https
+
+              # Middleware to redirect to bare https
+              #- traefik.http.middlewares.redirect-to-non-www-https.redirectregex.regex=^https?://(?:www\.)?(.+)
+              #- traefik.http.middlewares.redirect-to-non-www-https.redirectregex.replacement=https://$${1}
+              #- traefik.http.middlewares.redirect-to-non-www-https.redirectregex.permanent=true
+
+              # Dashboard on port 8000
+              - traefik.http.routers.api.entrypoints=api
+              - traefik.http.routers.api.rule=Host(`${DOMAIN?Variable not set}`)
+              - traefik.http.routers.api.service=api@internal
+              - traefik.http.routers.api.tls=true
+              - traefik.http.routers.api.tls.options=default
+              - traefik.http.routers.api.tls.certresolver=letsencrypt
+              # middlewares: use IP whitelisting, ratelimit and basic authentication
+              # - traefik.http.routers.api.middlewares=api-ipwhitelist,traefik-ratelimit,api-auth
+              - traefik.http.routers.api.middlewares=traefik-ratelimit,api-auth
+              - traefik.http.middlewares.api-auth.basicauth.users=${TRAEFIK_ADMINS?Variable not set}
+              # whitelist your public ip, see https://icanhazip.com
+              # replace with _your IP_
+              # - traefik.http.middlewares.api-ipwhitelist.ipwhitelist.sourcerange=${WHITELIST_IP?Variable not set}
+              - traefik.http.services.api.loadbalancer.server.port=8003
+
+              # Extra middleware (ratelimit, ip whitelisting)
+              - traefik.http.middlewares.traefik-ratelimit.ratelimit.average=100
+              - traefik.http.middlewares.traefik-ratelimit.ratelimit.burst=50
+networks:
+    traefik-public:
+        external: true

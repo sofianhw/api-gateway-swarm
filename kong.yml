@@ -1,0 +1,118 @@
+version: '3.4'
+services:
+  kong-database:
+    image: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=kong
+      - POSTGRES_DB=kong
+      - POSTGRES_PASSWORD=kong
+    deploy:
+      placement:
+         constraints:
+             - node.role == manager
+    networks:
+      - traefik-public
+
+  kong-migration:
+    image: kong:latest
+    depends_on:
+      - kong-database
+    environment:
+      - KONG_DATABASE=postgres
+      - KONG_PG_HOST=kong-database
+      - KONG_PG_USER=kong
+      - KONG_PG_PASSWORD=kong
+    command: sh -c "kong migrations bootstrap && kong migrations up && sleep 30"
+    deploy:
+      placement:
+         constraints:
+             - node.role == manager
+    networks:
+      - traefik-public
+
+  kong:
+    image: kong:latest
+    depends_on:
+      - kong-migration
+    healthcheck:
+      test: "kong health"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      - KONG_DATABASE=postgres
+      - KONG_PG_HOST=kong-database
+      - KONG_PG_USER=kong
+      - KONG_PG_PASSWORD=kong
+      - KONG_ADMIN_LISTEN=0.0.0.0:8001
+    ports:
+      - 8001:8001
+      - 8000:8000
+    deploy:
+      placement:
+         constraints:
+             - node.role == manager
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik-public
+        - traefik.http.routers.kong.entrypoints=web
+        - traefik.http.routers.kong.service=kong@docker
+        - traefik.http.routers.kong.rule=Host(`kong.slipiconvalley.com`)
+        #- traefik.http.routers.kong.tls=true
+        - traefik.http.services.kong.loadbalancer.server.port=8001
+        - traefik.http.routers.kongapi.entrypoints=web
+        - traefik.http.routers.kongapi.service=kongapi@docker
+        - traefik.http.routers.kongapi.rule=Host(`api.slipiconvalley.com`)
+        #- traefik.http.routers.kong.tls=true
+        - traefik.http.services.kongapi.loadbalancer.server.port=8000
+    networks:
+      - traefik-public
+
+  mongo:
+    image: mongo:latest
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - 27017:27017
+    networks:
+      - traefik-public
+    deploy:
+      placement:
+         constraints:
+             - node.role != manager
+
+  konga:
+    image: pantsel/konga:latest
+    depends_on:
+      - kong
+      - mongo
+    ports:
+      - 1337:1337
+    environment:
+      - DB_ADAPTER=mongo
+      - DB_HOST=mongo
+      - DB_DATABASE=konga
+      - NODE_ENV=production
+    deploy:
+      placement:
+         constraints:
+             - node.role != manager
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik-public
+        - traefik.http.routers.konga.entrypoints=web
+        - traefik.http.routers.konga.rule=Host(`konga.slipiconvalley.com`)
+        #- traefik.http.routers.konga.tls=true
+        - traefik.http.services.konga.loadbalancer.server.port=1337
+    networks:
+      - traefik-public
+
+networks:
+  traefik-public:
+    external: true
+
+volumes:
+  postgres_data:
+  mongo_data:
